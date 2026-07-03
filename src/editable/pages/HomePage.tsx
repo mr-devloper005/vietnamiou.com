@@ -9,6 +9,7 @@ import { EditableHomeCta, EditableHomeHero, EditableMagazineSplit, EditableStory
 import { EditableSiteShell } from '@/editable/shell/EditableSiteShell'
 import { Ads } from '@/lib/ads'
 export const revalidate = 300
+const hiddenDirectTasks = new Set<TaskKey>(['classified', 'profile'])
 
 export async function generateMetadata(): Promise<Metadata> {
   return buildPageMetadata({
@@ -29,9 +30,10 @@ function uniquePosts(posts: SitePost[]) {
 }
 
 export default async function HomePage() {
-  const primaryTask = (SITE_CONFIG.tasks.find((task) => task.enabled)?.key || 'article') as TaskKey
+  const visibleTasks = SITE_CONFIG.tasks.filter((task) => task.enabled && !hiddenDirectTasks.has(task.key as TaskKey))
+  const primaryTask = (visibleTasks[0]?.key || 'article') as TaskKey
   const primaryRoute = SITE_CONFIG.taskViews[primaryTask] || `/${primaryTask}`
-  const taskFeed: TaskFeedItem[] = await fetchHomeTaskFeed(12, { timeoutMs: 2500 })
+  const taskFeed: TaskFeedItem[] = (await fetchHomeTaskFeed(12, { timeoutMs: 2500 })).filter(({ task }) => !hiddenDirectTasks.has(task.key as TaskKey))
   const primaryPosts = uniquePosts(taskFeed.find(({ task }) => task.key === primaryTask)?.posts || taskFeed.flatMap(({ posts }) => posts)).slice(0, 24)
   const timeSections: HomeTimeSection[] = await fetchHomeTimeSections(primaryTask, { limit: 8, timeoutMs: 2500 })
   const baseUrl = SITE_CONFIG.baseUrl.replace(/\/$/, '')

@@ -9,8 +9,10 @@ import { SITE_CONFIG, type TaskKey } from '@/lib/site-config'
 import type { SitePost } from '@/lib/site-connector'
 import { EditableSiteShell } from '@/editable/shell/EditableSiteShell'
 import { pagesContent } from '@/editable/content/pages.content'
+import { Ads } from '@/lib/ads'
 
 export const revalidate = 3
+const hiddenDirectTasks = new Set<TaskKey>(['classified', 'profile'])
 
 export async function generateMetadata(): Promise<Metadata> {
   return buildPageMetadata({
@@ -23,13 +25,13 @@ export async function generateMetadata(): Promise<Metadata> {
 const stripHtml = (value: string) => value.replace(/<[^>]*>/g, ' ')
 const compactText = (value: unknown) => typeof value === 'string' ? stripHtml(value).replace(/\s+/g, ' ').trim().toLowerCase() : ''
 const getContent = (post: SitePost) => post.content && typeof post.content === 'object' ? post.content as Record<string, unknown> : {}
+const compactRaw = (value: unknown) => typeof value === 'string' ? value.trim() : ''
 const getImage = (post: SitePost) => {
   const content = getContent(post)
   const media = Array.isArray(post.media) ? post.media.find((item) => typeof item?.url === 'string')?.url : ''
   const images = Array.isArray(content.images) ? content.images.find((item) => typeof item === 'string') as string | undefined : ''
   return media || compactRaw(content.featuredImage) || compactRaw(content.image) || compactRaw(content.thumbnail) || images || ''
 }
-const compactRaw = (value: unknown) => typeof value === 'string' ? value.trim() : ''
 const summaryOf = (post: SitePost) => post.summary || compactRaw(getContent(post).description) || compactRaw(getContent(post).excerpt) || ''
 
 const matches = (post: SitePost, query: string, category: string, task: string) => {
@@ -48,8 +50,6 @@ const matches = (post: SitePost, query: string, category: string, task: string) 
 
 function SearchResultCard({ post, index }: { post: SitePost; index: number }) {
   const task = getPostTaskKey(post) as TaskKey | null
-  // Route from the task config (e.g. /listing/<slug>); buildPostUrl can fall
-  // back to /posts for tasks missing from the enabled taskViews map, which 404s.
   const taskRoute = SITE_CONFIG.tasks.find((item) => item.key === task)?.route
   const href = `${taskRoute || `/${task || 'article'}`}/${post.slug}`
   const image = getImage(post)
@@ -84,9 +84,14 @@ export default async function SearchPage({ searchParams }: { searchParams?: Prom
   const task = (resolved.task || '').trim().toLowerCase()
   const useMaster = resolved.master !== '0'
   const feed = await fetchSiteFeed(useMaster ? 1000 : 300, useMaster ? { fresh: true, category: category || undefined, task: task || undefined } : undefined)
-  const posts = feed?.posts?.length ? feed.posts : useMaster ? [] : SITE_CONFIG.tasks.filter((item) => item.enabled).flatMap((item) => getMockPostsForTask(item.key))
-  const results = posts.filter((post) => matches(post, normalized, category, task)).slice(0, normalized ? 80 : 36)
-  const enabledTasks = SITE_CONFIG.tasks.filter((item) => item.enabled)
+  const posts = (feed?.posts?.length ? feed.posts : useMaster ? [] : SITE_CONFIG.tasks.filter((item) => item.enabled && !hiddenDirectTasks.has(item.key as TaskKey)).flatMap((item) => getMockPostsForTask(item.key)))
+    .filter((post) => {
+      const derived = getPostTaskKey(post) as TaskKey | null
+      return !derived || !hiddenDirectTasks.has(derived)
+    })
+  const safeTask = hiddenDirectTasks.has(task as TaskKey) ? '' : task
+  const results = posts.filter((post) => matches(post, normalized, category, safeTask)).slice(0, normalized ? 80 : 36)
+  const enabledTasks = SITE_CONFIG.tasks.filter((item) => item.enabled && !hiddenDirectTasks.has(item.key as TaskKey))
 
   return (
     <EditableSiteShell>
@@ -109,7 +114,7 @@ export default async function SearchPage({ searchParams }: { searchParams?: Prom
                   <Filter className="h-4 w-4 opacity-45" />
                   <input name="category" defaultValue={category} placeholder="Category" className="min-w-0 flex-1 bg-transparent text-sm font-bold outline-none placeholder:text-current/35" />
                 </label>
-                <select name="task" defaultValue={task} className="rounded-2xl border border-[var(--editable-border)] bg-white px-4 py-3 text-sm font-black outline-none">
+                <select name="task" defaultValue={safeTask} className="rounded-2xl border border-[var(--editable-border)] bg-white px-4 py-3 text-sm font-black outline-none">
                   <option value="">All content types</option>
                   {enabledTasks.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
                 </select>
@@ -118,16 +123,21 @@ export default async function SearchPage({ searchParams }: { searchParams?: Prom
             </form>
           </div>
 
+          <div className="mx-auto max-w-6xl px-4 py-6">
+            <Ads slot="header" showLabel eager className="mx-auto w-full" />
+          </div>
+
           <div className="mt-10 flex flex-wrap items-end justify-between gap-4">
             <div>
               <p className="text-xs font-black uppercase tracking-[0.24em] opacity-50">{results.length} results</p>
-              <h2 className="mt-2 text-3xl font-black tracking-[-0.06em]">{query ? `Results for “${query}”` : pagesContent.search.resultsTitle}</h2>
+              <h2 className="mt-2 text-3xl font-black tracking-[-0.06em]">{query ? `Results for "${query}"` : pagesContent.search.resultsTitle}</h2>
             </div>
             <Link href="/article" className="inline-flex items-center gap-2 rounded-full border border-[var(--editable-border)] bg-white px-5 py-3 text-sm font-black">Browse latest <ArrowRight className="h-4 w-4" /></Link>
           </div>
+          <div className="directory-stripes mt-6 mx-auto h-[22px] max-w-5xl rounded-sm border border-[var(--editable-border)]" />
 
           {results.length ? (
-            <div className="mt-6 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+            <div className="mt-8 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
               {results.map((post, index) => <SearchResultCard key={post.id || post.slug} post={post} index={index} />)}
             </div>
           ) : (
